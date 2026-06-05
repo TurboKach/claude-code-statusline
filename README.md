@@ -28,7 +28,7 @@ Run from a clone, the installer **symlinks** `~/.claude/statusline-command.sh` t
 ## What it shows
 
 - **Line 1 — session name.** The session's auto-generated topic, read live from the **iTerm2 tab title** and colored per project (each repo gets a stable hue). macOS + iTerm2 only; every other terminal skips this line cleanly.
-- **Line 2 — context.** Working directory, git branch, model name, and an effort bar showing the active reasoning level against the model's maximum.
+- **Line 2 — context.** Working directory, git branch, model name, and an **effort bar** — one cell per reasoning level the model supports (`low · medium · high · xhigh · max` on Opus 4.8), filled up to the active level. When **ultracode** is active (xhigh effort driving a multi-agent workflow), the bar fills to the `xhigh` cell and a magenta **`↯`** icon appears right after it — your at-a-glance "ultracode is running" indicator.
 - **Line 3 — budget.** Context-window usage (`used / max (pct%)`) plus 5-hour and 7-day rate-limit meters, with a countdown when you're near a cap.
 
 ## Requirements
