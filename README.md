@@ -10,20 +10,17 @@ Add CSV export                          # session name (iTerm2 tab title), color
 
 ## Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/TurboKach/claude-code-statusline/main/install.sh | bash
-```
-
-The installer copies `statusline.sh` to `~/.claude/statusline-command.sh`, points `~/.claude/settings.json` at it (your other settings are preserved and a timestamped backup is saved), and checks for `jq`. No restart needed — Claude Code re-runs the status line on its next render.
-
-### Track it with git (recommended if you want to tweak it)
+Clone it wherever you keep your repos, then run the installer:
 
 ```bash
-git clone https://github.com/TurboKach/claude-code-statusline ~/Dev/claude-code-statusline
-cd ~/Dev/claude-code-statusline && ./install.sh
+git clone https://github.com/TurboKach/claude-code-statusline.git
+cd claude-code-statusline
+./install.sh
 ```
 
-Run from a clone, the installer **symlinks** `~/.claude/statusline-command.sh` to the repo file — so your edits are version-controlled and the live bar reflects them immediately.
+The installer finds its own location (no fixed directory required) and **symlinks** `~/.claude/statusline-command.sh` to the cloned `statusline.sh` — so the repo is the source of truth, your edits are version-controlled, and the live bar reflects them on its next render. It also points `~/.claude/settings.json` at the script (your other settings preserved, with a timestamped backup) and checks for `jq`. No restart needed.
+
+Keep the clone around — the install is a symlink to it. Update later with `git pull` in the clone.
 
 ## What it shows
 
