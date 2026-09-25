@@ -14,14 +14,6 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 
 mkdir -p "$CLAUDE_DIR"
 
-# --- dependency check: jq is required (the status line parses session JSON) ---
-if ! command -v jq >/dev/null 2>&1; then
-  echo "error: jq is required." >&2
-  echo "       macOS:  brew install jq" >&2
-  echo "       Debian: sudo apt-get install -y jq" >&2
-  exit 1
-fi
-
 # --- place the script ---
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/statusline.sh" ] && [ -f "$SRC_DIR/install.sh" ]; then
@@ -41,10 +33,24 @@ chmod +x "$DEST"
 
 # --- point settings.json at it (preserve other settings, back up first) ---
 CMD="bash $DEST"
+entry="\"statusLine\": { \"type\": \"command\", \"command\": \"$CMD\" }"
 if [ -f "$SETTINGS" ]; then
+  # A plain-text edit, no jq: statusLine is a flat object, so the regex spans all of it.
+  # Anything else is inserted as the first key.
+  json=$(<"$SETTINGS")
+  re='"statusLine"[[:space:]]*:[[:space:]]*\{[^{}]*\}'
+  if [[ $json =~ $re ]]; then json=${json/"${BASH_REMATCH[0]}"/"$entry"}
+  elif [[ $json == *'"statusLine"'* ]]; then
+    echo "error: can't safely edit statusLine in $SETTINGS; set it by hand to:" >&2
+    echo "       $entry" >&2
+    exit 1
+  elif [[ $json =~ ^[[:space:]]*(\{[[:space:]]*\})?[[:space:]]*$ ]]; then json="{ $entry }"
+  else json=${json/\{/"{
+  $entry,"}
+  fi
   cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
   tmp="$(mktemp)"
-  jq --arg cmd "$CMD" '.statusLine = {type:"command", command:$cmd}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+  printf '%s\n' "$json" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "updated statusLine in $SETTINGS (backup saved alongside)"
 else
   printf '{\n  "statusLine": { "type": "command", "command": "%s" }\n}\n' "$CMD" > "$SETTINGS"

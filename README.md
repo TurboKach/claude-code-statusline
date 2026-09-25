@@ -1,6 +1,6 @@
 # claude-code-statusline
 
-A lightweight multi-line status line for [Claude Code](https://www.claude.com/product/claude-code): session name, git branch, model, effort level, context window, and 5h / 7d rate limits. One Bash script, `jq` is the only dependency.
+A lightweight multi-line status line for [Claude Code](https://www.claude.com/product/claude-code): session name, git branch, model, effort level, context window, and 5h / 7d rate limits. One Bash script, nothing to install.
 
 ![Two Claude Code sessions: session name colored per project; directory, branch, model and effort bar; context usage and rate limits](assets/screenshot.png)
 
@@ -8,15 +8,15 @@ A lightweight multi-line status line for [Claude Code](https://www.claude.com/pr
 
 Most Claude Code status lines are small apps: a Node package run through `npx`, a compiled binary, a Python daemon, or a shell framework with themes and a config file. That's great if you want a dashboard. This project goes the other way: show the few things you actually glance at, and cost your machine next to nothing.
 
-- **One file.** `statusline.sh` is ~120 lines of code plus comments. Read it in five minutes, change it in place.
-- **Fast.** ~16 ms per render on an Apple M4 Pro, ~7 MB peak memory — and ~4 ms of that is bash itself starting. A single `jq` pass parses the whole session JSON, plus one `git` call for the branch.
+- **One file.** `statusline.sh` is ~155 lines of Bash and awk plus comments. Read it in ten minutes, change it in place.
+- **Fast.** ~7 ms per render on an Apple M4 Pro with the stock macOS bash, ~2 MB peak memory — and ~1.5 ms of that is bash itself starting. A single `awk` pass parses the whole session JSON, and the git branch is read straight from `.git/HEAD`, with no `git` process.
 - **Nothing in the background.** No daemon, no cache files, no config file, no network calls, no refresh timer. It runs only when Claude Code asks for a redraw.
 - **Uses what Claude Code already sends.** Session name, effort level, context window and rate limits all come from the JSON on stdin — no API calls, no transcript parsing (the one exception: at `xhigh` effort, a fast grep of the transcript to tell ultracode apart).
-- **No runtime to install.** Works with the stock macOS bash 3.2 and bash 5 on Linux.
+- **Nothing to install.** Needs only bash, awk and grep, which every macOS and Linux system already has — no `jq`, no Homebrew. Tested with bash 3.2 through 5.3 and the macOS, GNU, mawk and BusyBox awks.
 
 ## Install
 
-Requires [`jq`](https://jqlang.github.io/jq/) (`brew install jq` / `apt install jq`); `git` is optional, for the branch. macOS and Linux.
+No dependencies: works out of the box on macOS and Linux.
 
 ```bash
 git clone https://github.com/TurboKach/claude-code-statusline.git

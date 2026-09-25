@@ -1,55 +1,82 @@
 #!/usr/bin/env bash
 # Claude Code status line
 
-input=$(cat)
-
-# --- Parse input JSON in one jq pass (\x1f separator preserves empty fields) ---
+# --- Parse input JSON in one awk pass (\x1f separator preserves empty fields) ---
+# awk is POSIX and ships with every macOS and Linux, so there is nothing to install.
 IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_output \
-  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_name proj_idx < <(jq -rj '[
-    .workspace.current_dir // .cwd // "",
-    .model.display_name // "",
-    .model.id // "",
-    # numeric fields reach bash arithmetic, which runs $(...) inside a string, so
-    # `numbers` drops anything that is not a real number to the default
-    (.context_window.used_percentage | numbers | round) // "",
-    (.context_window.context_window_size | numbers | floor) // "",
-    (.context_window.total_input_tokens | numbers | floor) // 0,
-    (.context_window.total_output_tokens | numbers | floor) // 0,
-    (.rate_limits.five_hour.used_percentage | numbers | round) // "",
-    (.rate_limits.five_hour.resets_at | numbers | floor) // "",
-    (.rate_limits.seven_day.used_percentage | numbers | round) // "",
-    (.rate_limits.seven_day.resets_at | numbers | floor) // "",
-    .transcript_path // "",
-    .effort.level // "",
-    .session_name // "",
+  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_name proj_idx < <(LC_ALL=C awk -v FS=$'\x1f' '
+  # A tiny JSON reader: walks the tokens tracking the path of every value (.a.b, arrays
+  # as []), like jq, so key order, whitespace, new fields and nesting do not matter.
+  # String at path p, unescaped, with control chars dropped: a \x1f or newline in a value
+  # (e.g. a directory name) would shift text into numeric fields that bash evaluates as
+  # arithmetic, which runs $(...); it also keeps ANSI/OSC in names from hijacking the bar.
+  function str(p,   x, o, i, c) {
+    if (!(p in v) || !isstr[p]) return ""
+    x = v[p]; o = ""
+    for (i = 1; i <= length(x); i++) {
+      c = substr(x, i, 1)
+      # \u escapes are dropped: Claude Code only emits them for control chars
+      if (c == "\\") { c = substr(x, ++i, 1); if (c == "u") { i += 4; c = "" } else if (c != "\"" && c != "\\" && c != "/") c = "" }
+      else if (c == c2 && index(c1, substr(x, i + 1, 1))) { i++; c = "" }   # UTF-8 C1 control
+      if (!index(cntrl, c)) o = o c
+    }
+    return o
+  }
+  # number at path p, floored (or rounded if r). Digits only, because bash arithmetic
+  # runs $(...) inside a string; exponents and absurd sizes count as absent.
+  function num(p, r) {
+    if (!(p in v) || isstr[p] || v[p] !~ /^[0-9]+(\.[0-9]+)?$/ || v[p] + 0 >= 1e15) return ""
+    return sprintf("%.0f", int(v[p] + (r ? 0.5 : 0)))
+  }
+  function dflt(a, b) { return a != "" ? a : b }
+  BEGIN {
+    d = 0
+    for (i = 1; i < 256; i++) {
+      c = sprintf("%c", i); ord[c] = i
+      if (i < 32 || i == 127) cntrl = cntrl c; else if (i >= 128 && i < 160) c1 = c1 c; else if (i == 194) c2 = c
+    }
+  }
+  { s = s $0 " " }
+  END {
+    while (s != "") {
+      if (match(s, /^[ \t\r\n,:]+/)) { s = substr(s, RLENGTH + 1); continue }
+      c = substr(s, 1, 1)
+      if (c == "}" || c == "]") { d--; iskey[d] = (t[d] == "{"); s = substr(s, 2); continue }
+      here = !d ? "" : t[d] == "{" ? p[d] "." k[d] : p[d] "[]"
+      if (c == "{" || c == "[") { d++; t[d] = c; p[d] = here; iskey[d] = (c == "{"); s = substr(s, 2); continue }
+      if (c == "\"") { if (!match(s, /^"([^"\\]|\\.)*"/)) break; tok = substr(s, 2, RLENGTH - 2) }
+      else { if (!match(s, /^[-+.0-9A-Za-z]+/)) break; tok = substr(s, 1, RLENGTH) }
+      s = substr(s, RLENGTH + 1)
+      if (iskey[d]) { k[d] = tok; iskey[d] = 0; continue }
+      v[here] = tok; isstr[here] = (c == "\""); iskey[d] = (t[d] == "{")
+    }
     # per-project color index: stable string hash of the launch dir
-    (.workspace.project_dir // .cwd // "" | reduce explode[] as $c (0; (. * 31 + $c) % 65521) % 8)
-  ]
-  # strip control chars from every field: a \x1f or newline in a value (e.g. a directory
-  # name) would shift text into numeric fields that bash evaluates as arithmetic, which
-  # runs $(...); it also keeps ANSI/OSC in names from hijacking the bar
-  | map(tostring | gsub("[[:cntrl:]]"; "")) | join([31]|implode)' <<<"$input")
+    x = dflt(str(".workspace.project_dir"), str(".cwd")); h = 0
+    for (i = 1; i <= length(x); i++) h = (h * 31 + ord[substr(x, i, 1)]) % 65521
+    printf "%s", dflt(str(".workspace.current_dir"), str(".cwd")) FS str(".model.display_name") FS str(".model.id") FS \
+      num(".context_window.used_percentage", 1) FS num(".context_window.context_window_size") FS \
+      dflt(num(".context_window.total_input_tokens"), 0) FS dflt(num(".context_window.total_output_tokens"), 0) FS \
+      num(".rate_limits.five_hour.used_percentage", 1) FS num(".rate_limits.five_hour.resets_at") FS \
+      num(".rate_limits.seven_day.used_percentage", 1) FS num(".rate_limits.seven_day.resets_at") FS \
+      str(".transcript_path") FS str(".effort.level") FS str(".session_name") FS h % 8
+  }')
 
 # effort.level (CC >= 2.1.122) is the live session value: tracks mid-session
 # /effort changes, reports ultracode as xhigh, and is empty on models that
 # do not support effort (so the bar self-hides, e.g. on Haiku).
 
 # Ultracode (xhigh + workflow orchestration) reports as plain "xhigh" in stdin,
-# so when at xhigh we scan the whole transcript for the most recent /effort command;
-# the grep prefilter keeps that fast on multi-MB transcripts (LC_ALL=C: macOS grep is
-# ~5x slower in a UTF-8 locale; the needle is ASCII). jq then scopes it to
-# the <local-command-stdout> wrapper + user-string lines, so quoted mentions in chat
-# or tool output can't false-match. Last command wins (switching away
-# self-corrects); falls back to plain xhigh if the format ever changes.
-if [ "$effort" = "xhigh" ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
-  last_effort=$(LC_ALL=C grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null | jq -r '
-    select(.type == "user")
-    | .message.content
-    | select(type == "string")
-    | capture("<local-command-stdout>Set effort level to (?<e>[a-z]+)")
-    | .e
-  ' 2>/dev/null | tail -n 1)
-  [ "$last_effort" = "ultracode" ] && effort="ultracode"
+# so when at xhigh the transcript's most recent /effort output decides (last command
+# wins, so switching away self-corrects). The needle includes the JSON key, so only a
+# real command-output line matches: quoted mentions in chat or tool output have their
+# quotes escaped (\"content\":\"...). Two greps because macOS grep scans ~2x slower
+# with the leading quote; the second one only sees the few prefiltered lines.
+# LC_ALL=C: macOS grep is ~5x slower in a UTF-8 locale; the needles are ASCII.
+# Falls back to plain xhigh if the format ever changes.
+if [ "$effort" = "xhigh" ] && [ -f "$transcript_path" ]; then
+  last_effort=$(LC_ALL=C grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null \
+    | LC_ALL=C grep -F '"content":"<local-command-stdout>Set effort level to ' | tail -n 1)
+  [[ $last_effort == *'"type":"user"'* && $last_effort == *'Set effort level to ultracode'* ]] && effort="ultracode"
 fi
 
 # --- Colors (256-palette) ---
@@ -74,9 +101,8 @@ pct_color() {   # sets c
   fi
 }
 
-now=${EPOCHSECONDS:-$(date +%s)}   # builtin on bash 5; one date fork on macOS's bash 3.2
-
 countdown() {   # sets cd
+  [ -z "$now" ] && now=${EPOCHSECONDS:-$(date +%s)}   # builtin on bash 5; one date fork on 3.2, only when needed
   local diff=$(( $1 - now )); cd=""
   [ "$diff" -le 0 ] && return
   local h=$((diff / 3600)) m=$(( (diff % 3600) / 60 ))
@@ -103,9 +129,21 @@ effort_bar() {
 # --- Line 1: dir + branch + model + effort bar ---
 tilde="~"   # via a variable: a literal ~ in the replacement re-expands to $HOME in bash 5.2+
 line1="${grey}${cwd/#$HOME/$tilde}${reset}"
-# branch, or short sha when detached; both fail silently outside a repo
-branch=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null \
-         || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
+# branch, or short sha when detached, read straight from .git/HEAD (no git process).
+# A .git file is a worktree/submodule pointer ("gitdir: <path>"). Reftable repos keep
+# a placeholder HEAD, so those ask git (if installed); outside a repo nothing shows.
+d=$cwd branch=""
+while [ -n "$d" ] && [ ! -e "$d/.git" ]; do d=${d%/*}; done
+g=$d/.git
+if [ -f "$g" ]; then read -r g < "$g"; g=${g#gitdir: }; [ "${g#/}" = "$g" ] && g=$d/$g; fi
+if [ -n "$d" ] && read -r head 2>/dev/null < "$g/HEAD"; then
+  case $head in
+    "ref: refs/heads/.invalid") branch=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null \
+                                         || git -C "$cwd" rev-parse --short HEAD 2>/dev/null) ;;
+    "ref: refs/heads/"*) branch=${head#ref: refs/heads/} ;;
+    *) branch=${head:0:7} ;;
+  esac
+fi
 [ -n "$branch" ] && line1+=" ${cyan}${branch}${reset}"
 [ -n "$model" ] && line1+=" ${orange}${model}${reset}"
 
