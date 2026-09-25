@@ -19,11 +19,14 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
     .rate_limits.seven_day.resets_at // "",
     .transcript_path // "",
     .effort.level // "",
-    # drop control chars so a session name cannot break the read or inject ANSI/OSC into the bar
-    (.session_name // "" | gsub("[[:cntrl:]]"; "")),
+    .session_name // "",
     # per-project color index: stable string hash of the launch dir
     (.workspace.project_dir // .cwd // "" | reduce explode[] as $c (0; (. * 31 + $c) % 65521) % 8)
-  ] | join([31]|implode)' <<<"$input")
+  ]
+  # strip control chars from every field: a \x1f or newline in a value (e.g. a directory
+  # name) would shift text into numeric fields that bash evaluates as arithmetic, which
+  # runs $(...); it also keeps ANSI/OSC in names from hijacking the bar
+  | map(tostring | gsub("[[:cntrl:]]"; "")) | join([31]|implode)' <<<"$input")
 
 # effort.level (CC >= 2.1.122) is the live session value: tracks mid-session
 # /effort changes, reports ultracode as xhigh, and is empty on models that
@@ -63,12 +66,15 @@ pct_color() {
   fi
 }
 
+now=${EPOCHSECONDS:-$(date +%s)}   # builtin on bash 5; one date fork on macOS's bash 3.2
+
 countdown() {
-  local diff=$(( $1 - $(date +%s) ))
+  local diff=$(( $1 - now ))
   [ "$diff" -le 0 ] && return
   local h=$((diff / 3600)) m=$(( (diff % 3600) / 60 ))
-  if [ "$h" -gt 0 ]; then printf '~%dh%02dm' "$h" "$m"
-  else printf '~%dm' "$m"
+  if [ "$h" -ge 24 ]; then printf '%dd%dh' $((h / 24)) $((h % 24))
+  elif [ "$h" -gt 0 ]; then printf '%dh%02dm' "$h" "$m"
+  else printf '%dm' "$m"
   fi
 }
 
@@ -140,12 +146,12 @@ fi
 rate_limit() {
   local pct=$1 reset_at=$2 label=$3
   [ -z "$pct" ] && return
-  local n; n=$(printf '%.0f' "$pct")
+  local n c; n=$(printf '%.0f' "$pct"); c=$(pct_color "$n")
   [ -n "$line2" ] && line2+="  "
-  line2+="$(pct_color "$n")${label}:${n}%${reset}"
-  if [ "$n" -ge 75 ] && [ -n "$reset_at" ]; then
+  line2+="${c}${label}:${n}%${reset}"
+  if [ "$n" -ge 50 ] && [ -n "$reset_at" ]; then
     local cd; cd=$(countdown "$reset_at")
-    [ -n "$cd" ] && line2+="${red} ${cd}${reset}"
+    [ -n "$cd" ] && line2+="${c} ↻${cd}${reset}"
   fi
 }
 rate_limit "$fh_pct" "$fh_reset" "5h"

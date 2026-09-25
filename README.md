@@ -26,7 +26,7 @@ Keep the clone around — the install is a symlink to it. Update later with `git
 
 - **Line 1 — session name.** Your `/rename` name, or else Claude's auto-generated session title, colored per project (each launch directory gets a stable hue). Hidden until the session has a name.
 - **Line 2 — context.** Working directory, git branch, model name, and an **effort bar** — one cell per reasoning level the model supports (`low · medium · high · xhigh · max` on Opus 4.8), filled up to the active level. When **ultracode** is active (xhigh effort driving a multi-agent workflow), the bar fills to the `xhigh` cell and a magenta **`↯`** icon appears right after it — your at-a-glance "ultracode is running" indicator.
-- **Line 3 — budget.** Context-window usage (`used / max (pct%)`) plus 5-hour and 7-day rate-limit meters, with a countdown when you're near a cap.
+- **Line 3 — budget.** Context-window usage (`used / max (pct%)`) plus 5-hour and 7-day rate-limit meters; from 50% a meter adds `↻` and the time until that window resets.
 
 ## Requirements
 
