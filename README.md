@@ -2,7 +2,7 @@
 
 A lightweight multi-line status line for [Claude Code](https://www.claude.com/product/claude-code): session name, git branch, model, effort level, context window, 5h / 7d rate limits, and a prompt-cache countdown. One Bash script, nothing to install.
 
-![Two Claude Code sessions: session name colored per project; directory, branch, model and effort bar; context usage and rate limits](assets/screenshot.png)
+![Two Claude Code sessions: session name colored per project; directory, branch, model and effort bar; context usage, rate limits and prompt-cache countdown, one expired and one with 48 minutes left](assets/screenshot.png)
 
 ## Why another status line?
 
