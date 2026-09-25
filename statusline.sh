@@ -12,9 +12,9 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
     # numeric fields reach bash arithmetic, which runs $(...) inside a string, so
     # `numbers` drops anything that is not a real number to the default
     (.context_window.used_percentage | numbers | round) // "",
-    (.context_window.context_window_size | numbers) // "",
-    (.context_window.total_input_tokens | numbers) // 0,
-    (.context_window.total_output_tokens | numbers) // 0,
+    (.context_window.context_window_size | numbers | floor) // "",
+    (.context_window.total_input_tokens | numbers | floor) // 0,
+    (.context_window.total_output_tokens | numbers | floor) // 0,
     (.rate_limits.five_hour.used_percentage | numbers | round) // "",
     (.rate_limits.five_hour.resets_at | numbers | floor) // "",
     (.rate_limits.seven_day.used_percentage | numbers | round) // "",
