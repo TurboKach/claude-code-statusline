@@ -9,14 +9,16 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
     .workspace.current_dir // .cwd // "",
     .model.display_name // "",
     .model.id // "",
-    .context_window.used_percentage // "",
-    .context_window.context_window_size // "",
-    .context_window.total_input_tokens // 0,
-    .context_window.total_output_tokens // 0,
-    .rate_limits.five_hour.used_percentage // "",
-    .rate_limits.five_hour.resets_at // "",
-    .rate_limits.seven_day.used_percentage // "",
-    .rate_limits.seven_day.resets_at // "",
+    # numeric fields reach bash arithmetic, which runs $(...) inside a string, so
+    # `numbers` drops anything that is not a real number to the default
+    (.context_window.used_percentage | numbers | round) // "",
+    (.context_window.context_window_size | numbers) // "",
+    (.context_window.total_input_tokens | numbers) // 0,
+    (.context_window.total_output_tokens | numbers) // 0,
+    (.rate_limits.five_hour.used_percentage | numbers | round) // "",
+    (.rate_limits.five_hour.resets_at | numbers | floor) // "",
+    (.rate_limits.seven_day.used_percentage | numbers | round) // "",
+    (.rate_limits.seven_day.resets_at | numbers | floor) // "",
     .transcript_path // "",
     .effort.level // "",
     .session_name // "",
@@ -33,12 +35,13 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
 # do not support effort (so the bar self-hides, e.g. on Haiku).
 
 # Ultracode (xhigh + workflow orchestration) reports as plain "xhigh" in stdin,
-# so when at xhigh we peek at the transcript for the most recent /effort command.
-# Scoped to the <local-command-stdout> wrapper + user-string lines, so quoted
-# mentions in chat or tool output can't false-match. Last command wins (switching
-# away self-corrects); falls back to plain xhigh if the format ever changes.
+# so when at xhigh we scan the whole transcript for the most recent /effort command;
+# the grep prefilter keeps that fast on multi-MB transcripts. jq then scopes it to
+# the <local-command-stdout> wrapper + user-string lines, so quoted mentions in chat
+# or tool output can't false-match. Last command wins (switching away
+# self-corrects); falls back to plain xhigh if the format ever changes.
 if [ "$effort" = "xhigh" ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
-  last_effort=$(tail -n 2000 "$transcript_path" 2>/dev/null | jq -r '
+  last_effort=$(grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null | jq -r '
     select(.type == "user")
     | .message.content
     | select(type == "string")
@@ -58,41 +61,42 @@ yellow=$'\033[38;5;226m'
 red=$'\033[38;5;196m'
 magenta=$'\033[38;5;201m'
 reset=$'\033[0m'
+# Claude Code's own /effort colors (truecolor), looked up by name as eff_<level>
+eff_low=$'\033[38;2;255;193;7m' eff_medium=$'\033[38;2;78;186;101m' eff_high=$'\033[38;2;177;185;249m'
+eff_xhigh=$'\033[38;2;175;135;255m' eff_max=$'\033[38;2;200;130;180m'
 
-pct_color() {
-  if [ "$1" -ge 75 ]; then printf '%s' "$red"
-  elif [ "$1" -ge 50 ]; then printf '%s' "$yellow"
-  else printf '%s' "$green"
+# Helpers set variables / append to the line directly: $(...) would fork a subshell.
+pct_color() {   # sets c
+  if [ "$1" -ge 75 ]; then c=$red
+  elif [ "$1" -ge 50 ]; then c=$yellow
+  else c=$green
   fi
 }
 
 now=${EPOCHSECONDS:-$(date +%s)}   # builtin on bash 5; one date fork on macOS's bash 3.2
 
-countdown() {
-  local diff=$(( $1 - now ))
+countdown() {   # sets cd
+  local diff=$(( $1 - now )); cd=""
   [ "$diff" -le 0 ] && return
   local h=$((diff / 3600)) m=$(( (diff % 3600) / 60 ))
-  if [ "$h" -ge 24 ]; then printf '%dd%dh' $((h / 24)) $((h % 24))
-  elif [ "$h" -gt 0 ]; then printf '%dh%02dm' "$h" "$m"
-  else printf '%dm' "$m"
+  if [ "$h" -ge 24 ]; then printf -v cd '%dd%dh' $((h / 24)) $((h % 24))
+  elif [ "$h" -gt 0 ]; then printf -v cd '%dh%02dm' "$h" "$m"
+  else printf -v cd '%dm' "$m"
   fi
 }
 
-# Render the effort bar: `total` cells (one per level the model supports), the
-# first `pos` filled in their hue and the rest dim. Trailing dim cells are the
-# model's remaining headroom, so a full bar means "maxed for this model".
+# Append the effort bar to line1: one cell per level the model supports ($2...),
+# the first `pos` ($1) each in its own level's color and the rest dim. Trailing dim
+# cells are the model's remaining headroom, so a full bar means "maxed for this model".
 effort_bar() {
-  local pos=$1 total=$2 i
+  local pos=$1 i=0 l v
   local chars=("▁" "▃" "▅" "▇" "█")
-  local hues=($'\033[38;5;46m' $'\033[38;5;226m' $'\033[38;5;214m' $'\033[38;5;202m' $'\033[38;5;196m')
-  for ((i = 0; i < total; i++)); do
-    if [ $((i + 1)) -le "$pos" ]; then
-      printf '%s%s' "${hues[$i]}" "${chars[$i]}"
-    else
-      printf '%s%s' "$dim_grey" "${chars[$i]}"
-    fi
+  shift
+  for l in "$@"; do
+    if [ "$i" -lt "$pos" ]; then v=eff_$l; line1+=${!v}; else line1+=$dim_grey; fi
+    line1+=${chars[$i]}; i=$((i + 1))
   done
-  printf '%s' "$reset"
+  line1+=$reset
 }
 
 # --- Line 1: dir + branch + model + effort bar ---
@@ -116,16 +120,19 @@ if [ -n "$effort" ]; then
   esac
 
   # Ultracode = xhigh + workflow orchestration: render at the xhigh slot + a badge.
-  level="$effort"; badge=""
-  [ "$effort" = "ultracode" ] && { level="xhigh"; badge="${magenta}↯${reset}"; }
+  level="$effort"
+  [ "$effort" = "ultracode" ] && level="xhigh"
 
   set -- $levels
   pos=""; i=1
   for l in "$@"; do [ "$l" = "$level" ] && { pos=$i; break; }; i=$((i + 1)); done
 
   if [ -n "$pos" ]; then
-    line1+=$(effort_bar "$pos" "$#")
-    line1+="$badge"
+    effort_bar "$pos" "$@"
+    [ "$effort" = "ultracode" ] && line1+="${magenta}↯${reset}"
+    v=eff_$level; label="${!v}${effort}"
+    [ "$level" = "max" ] && label=$'\033[38;2;130;170;220mm\033[38;2;155;130;200ma'"${eff_max}x"   # per-letter gradient
+    line1+=" ${label}${reset}"
   else
     line1+="${orange}${effort}${reset}"   # level not valid for this model: show raw
   fi
@@ -134,23 +141,23 @@ fi
 # --- Line 2: context usage + rate limits ---
 line2=""
 if [ -n "$used_pct" ] && [ -n "$ctx_size" ]; then
-  used_int=$(printf '%.0f' "$used_pct")
   used_k=$(( (total_input + total_output) / 1000 ))
   max_k=$((ctx_size / 1000))
   if [ "$max_k" -ge 1000 ]; then max_label="$((max_k / 1000))M"
   else max_label="${max_k}k"
   fi
-  line2+="$(pct_color "$used_int")${used_k}k/${max_label} (${used_int}%)${reset}"
+  pct_color "$used_pct"
+  line2+="${c}${used_k}k/${max_label} (${used_pct}%)${reset}"
 fi
 
 rate_limit() {
-  local pct=$1 reset_at=$2 label=$3
+  local pct=$1 reset_at=$2 label=$3 c cd
   [ -z "$pct" ] && return
-  local n c; n=$(printf '%.0f' "$pct"); c=$(pct_color "$n")
+  pct_color "$pct"
   [ -n "$line2" ] && line2+="  "
-  line2+="${c}${label}:${n}%${reset}"
-  if [ "$n" -ge 50 ] && [ -n "$reset_at" ]; then
-    local cd; cd=$(countdown "$reset_at")
+  line2+="${c}${label}:${pct}%${reset}"
+  if [ "$pct" -ge 50 ] && [ -n "$reset_at" ]; then
+    countdown "$reset_at"
     [ -n "$cd" ] && line2+="${c} ↻${cd}${reset}"
   fi
 }
