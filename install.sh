@@ -33,12 +33,14 @@ chmod +x "$DEST"
 
 # --- point settings.json at it (preserve other settings, back up first) ---
 CMD="bash $DEST"
-entry="\"statusLine\": { \"type\": \"command\", \"command\": \"$CMD\" }"
+cmd_json=${CMD//\\/\\\\}; cmd_json=${cmd_json//\"/\\\"}   # JSON-escape \ and "
+entry="\"statusLine\": { \"type\": \"command\", \"command\": \"$cmd_json\" }"
 if [ -f "$SETTINGS" ]; then
-  # A plain-text edit, no jq: statusLine is a flat object, so the regex spans all of it.
+  # A plain-text edit, no jq: statusLine is a flat object, so the regex spans all of it
+  # (strings are matched whole, so a { or } inside the old command can't cut it short).
   # Anything else is inserted as the first key.
   json=$(<"$SETTINGS")
-  re='"statusLine"[[:space:]]*:[[:space:]]*\{[^{}]*\}'
+  re='"statusLine"[[:space:]]*:[[:space:]]*\{([^{}"]|"([^"\\]|\\.)*")*\}'
   if [[ $json =~ $re ]]; then json=${json/"${BASH_REMATCH[0]}"/"$entry"}
   elif [[ $json == *'"statusLine"'* ]]; then
     echo "error: can't safely edit statusLine in $SETTINGS; set it by hand to:" >&2
@@ -53,7 +55,7 @@ if [ -f "$SETTINGS" ]; then
   printf '%s\n' "$json" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "updated statusLine in $SETTINGS (backup saved alongside)"
 else
-  printf '{\n  "statusLine": { "type": "command", "command": "%s" }\n}\n' "$CMD" > "$SETTINGS"
+  printf '{\n  %s\n}\n' "$entry" > "$SETTINGS"
   echo "created $SETTINGS with statusLine"
 fi
 

@@ -67,15 +67,16 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
 
 # Ultracode (xhigh + workflow orchestration) reports as plain "xhigh" in stdin,
 # so when at xhigh the transcript's most recent /effort output decides (last command
-# wins, so switching away self-corrects). The needle includes the JSON key, so only a
+# wins, so switching away self-corrects). The needle includes the JSON keys, so only a
 # real command-output line matches: quoted mentions in chat or tool output have their
-# quotes escaped (\"content\":\"...). Two greps because macOS grep scans ~2x slower
-# with the leading quote; the second one only sees the few prefiltered lines.
+# quotes escaped (\"content\":\"...), and a tool result that happens to start with the
+# text is keyed "type":"tool_result", not "role":"user". Two greps because macOS grep
+# scans ~2x slower with the leading quote; the second only sees prefiltered lines.
 # LC_ALL=C: macOS grep is ~5x slower in a UTF-8 locale; the needles are ASCII.
 # Falls back to plain xhigh if the format ever changes.
 if [ "$effort" = "xhigh" ] && [ -f "$transcript_path" ]; then
   last_effort=$(LC_ALL=C grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null \
-    | LC_ALL=C grep -F '"content":"<local-command-stdout>Set effort level to ' | tail -n 1)
+    | LC_ALL=C grep -F '"role":"user","content":"<local-command-stdout>Set effort level to ' | tail -n 1)
   [[ $last_effort == *'"type":"user"'* && $last_effort == *'Set effort level to ultracode'* ]] && effort="ultracode"
 fi
 
@@ -132,7 +133,10 @@ line1="${grey}${cwd/#$HOME/$tilde}${reset}"
 # branch, or short sha when detached, read straight from .git/HEAD (no git process).
 # A .git file is a worktree/submodule pointer ("gitdir: <path>"). Reftable repos keep
 # a placeholder HEAD, so those ask git (if installed); outside a repo nothing shows.
-d=$cwd branch=""
+# The walk starts from the physical path (symlinks resolved, like git -C), which is
+# always absolute, so it ends at /.
+d="" branch=""
+cd -P -- "$cwd" >/dev/null 2>&1 && d=$PWD
 while [ -n "$d" ] && [ ! -e "$d/.git" ]; do d=${d%/*}; done
 g=$d/.git
 if [ -f "$g" ]; then read -r g < "$g"; g=${g#gitdir: }; [ "${g#/}" = "$g" ] && g=$d/$g; fi
