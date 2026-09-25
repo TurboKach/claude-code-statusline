@@ -5,7 +5,7 @@ input=$(cat)
 
 # --- Parse input JSON in one jq pass (\x1f separator preserves empty fields) ---
 IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_output \
-  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_id < <(jq -rj '[
+  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_name proj_idx < <(jq -rj '[
     .workspace.current_dir // .cwd // "",
     .model.display_name // "",
     .model.id // "",
@@ -19,7 +19,10 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
     .rate_limits.seven_day.resets_at // "",
     .transcript_path // "",
     .effort.level // "",
-    .session_id // ""
+    # drop control chars so a session name cannot break the read or inject ANSI/OSC into the bar
+    (.session_name // "" | gsub("[[:cntrl:]]"; "")),
+    # per-project color index: stable string hash of the launch dir
+    (.workspace.project_dir // .cwd // "" | reduce explode[] as $c (0; (. * 31 + $c) % 65521) % 8)
   ] | join([31]|implode)' <<<"$input")
 
 # effort.level (CC >= 2.1.122) is the live session value: tracks mid-session
@@ -87,12 +90,12 @@ effort_bar() {
 }
 
 # --- Line 1: dir + branch + model + effort bar ---
-line1="${grey}${cwd/#$HOME/~}${reset}"
-if git -C "$cwd" rev-parse --is-inside-work-tree --no-optional-locks >/dev/null 2>&1; then
-  branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null \
-           || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
-  [ -n "$branch" ] && line1+=" ${cyan}${branch}${reset}"
-fi
+tilde="~"   # via a variable: a literal ~ in the replacement re-expands to $HOME in bash 5.2+
+line1="${grey}${cwd/#$HOME/$tilde}${reset}"
+# branch, or short sha when detached; both fail silently outside a repo
+branch=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null \
+         || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
+[ -n "$branch" ] && line1+=" ${cyan}${branch}${reset}"
 [ -n "$model" ] && line1+=" ${orange}${model}${reset}"
 
 if [ -n "$effort" ]; then
@@ -148,52 +151,9 @@ rate_limit() {
 rate_limit "$fh_pct" "$fh_reset" "5h"
 rate_limit "$sd_pct" "$sd_reset" "7d"
 
-# --- Line 0: the session's iTerm2 tab title (Claude's auto-generated name), colored per-project ---
-# The title lives only in iTerm2 (set via an OSC escape), so we read it back with
-# AppleScript keyed on $ITERM_SESSION_ID. osascript is slow and walks every tab, so the
-# bar reads a cached value and a detached background job refreshes it (>=8s old). Any
-# non-iTerm terminal has no $ITERM_SESSION_ID, so line 0 is simply skipped there.
-[ -z "$session_id" ] && session_id=$(basename "$transcript_path" .jsonl 2>/dev/null)
-line0=""
-if [ -n "$ITERM_SESSION_ID" ] && [ -n "$session_id" ]; then
-  cache="$HOME/.claude/session-labels/${session_id}.txt"
-  mkdir -p "$HOME/.claude/session-labels" 2>/dev/null   # exist before touch so the throttle works on first run
-  mtime=$(stat -f %m "$cache" 2>/dev/null || echo 0)
-  if [ $(( $(date +%s) - mtime )) -ge 8 ]; then
-    touch "$cache" 2>/dev/null   # bump mtime now so concurrent renders don't also refresh
-    ( {
-        # $ITERM_SESSION_ID is iTerm-set as "wNtNpN:UUID"; keep only the UUID and
-        # sanitize to [A-Za-z0-9-] so nothing can break or inject the AppleScript string
-        uuid=$(printf '%s' "${ITERM_SESSION_ID##*:}" | tr -cd 'A-Za-z0-9-')
-        [ -n "$uuid" ] || exit 0
-        raw=$(osascript -e "tell application \"iTerm2\"
-          repeat with w in windows
-            repeat with t in tabs of w
-              repeat with s in sessions of t
-                if (id of s) is \"$uuid\" then return name of s
-              end repeat
-            end repeat
-          end repeat
-        end tell" 2>/dev/null)
-        # strip iTerm's leading status glyph (one non-alnum char + space) and a trailing
-        # single-token " (jobname)"; leaves real titles like "Fix parser (phase 2)" intact
-        clean=$(printf '%s' "$raw" | sed -E 's/^[^[:alnum:][:space:]][[:space:]]+//; s/ \([^ )]+\)$//')
-        # write atomically (temp + mv) so a concurrent reader never sees a torn/empty file
-        [ -n "$clean" ] && printf '%s' "$clean" > "$cache.tmp.$$" && mv -f "$cache.tmp.$$" "$cache"
-      } </dev/null >/dev/null 2>&1 & )
-  fi
-  # read cached title; drop control bytes so a title can't inject ANSI/OSC into the bar
-  label=$(head -n1 "$cache" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')
-  if [ -n "$label" ]; then
-    proj=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$cwd")
-    idx=$(printf '%s' "$proj" | cksum | awk '{print $1 % 8}')
-    proj_hues=(75 215 114 177 221 80 211 252)   # mid-bright: sky orange green purple gold teal rose grey
-    line0=$'\033[38;5;'"${proj_hues[$idx]}m${label}${reset}"
-  fi
+# --- Line 0: session name (/rename or Claude's auto-generated title), colored per project ---
+if [ -n "$session_name" ]; then
+  proj_hues=(75 215 114 177 221 80 211 252)   # mid-bright: sky orange green purple gold teal rose grey
+  printf '\033[38;5;%sm%s%s\n' "${proj_hues[$proj_idx]}" "$session_name" "$reset"
 fi
-
-if [ -n "$line0" ]; then
-  printf '%s\n%s\n%s\n' "$line0" "$line1" "$line2"
-else
-  printf '%s\n%s\n' "$line1" "$line2"
-fi
+printf '%s\n%s\n' "$line1" "$line2"

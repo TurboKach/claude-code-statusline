@@ -53,4 +53,3 @@ fi
 
 echo
 echo "Done. Claude Code picks up the new status line on its next render."
-echo "Note: the session-name line needs iTerm2 on macOS; other terminals skip it cleanly."

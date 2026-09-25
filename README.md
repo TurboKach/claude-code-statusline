@@ -1,9 +1,9 @@
 # claude-code-statusline
 
-Multi-line status line for [Claude Code](https://www.claude.com/product/claude-code): a per-project-colored session name read live from the iTerm2 tab title, an effort bar, and context-window + rate-limit meters.
+Multi-line status line for [Claude Code](https://www.claude.com/product/claude-code): a per-project-colored session name, an effort bar, and context-window + rate-limit meters.
 
 ```
-Add CSV export                          # session name (iTerm2 tab title), colored per project
+Add CSV export                          # session name, colored per project
 ~/proj  main  Opus ▁▃▅▇█                # directory, git branch, model, effort bar
 312k/1M (31%)  5h:24%  7d:9%            # context window usage, 5h / 7d rate limits
 ```
@@ -24,26 +24,20 @@ Keep the clone around — the install is a symlink to it. Update later with `git
 
 ## What it shows
 
-- **Line 1 — session name.** The session's auto-generated topic, read live from the **iTerm2 tab title** and colored per project (each repo gets a stable hue). macOS + iTerm2 only; every other terminal skips this line cleanly.
+- **Line 1 — session name.** Your `/rename` name, or else Claude's auto-generated session title, colored per project (each launch directory gets a stable hue). Hidden until the session has a name.
 - **Line 2 — context.** Working directory, git branch, model name, and an **effort bar** — one cell per reasoning level the model supports (`low · medium · high · xhigh · max` on Opus 4.8), filled up to the active level. When **ultracode** is active (xhigh effort driving a multi-agent workflow), the bar fills to the `xhigh` cell and a magenta **`↯`** icon appears right after it — your at-a-glance "ultracode is running" indicator.
 - **Line 3 — budget.** Context-window usage (`used / max (pct%)`) plus 5-hour and 7-day rate-limit meters, with a countdown when you're near a cap.
 
 ## Requirements
 
 - **[`jq`](https://jqlang.github.io/jq/)** — required (`brew install jq`). Parses the session JSON on stdin.
-- **iTerm2** (macOS) — optional, only for the session-name line. Other terminals work without it.
 - **git** — optional, for the branch display.
-
-## How the session-name line works
-
-Claude Code sets your session's auto-generated topic as the **iTerm2 tab title** (via an OSC escape sequence) but never writes it to a file. This script reads it back with AppleScript keyed on `$ITERM_SESSION_ID`, strips iTerm's status glyph and job-name suffix, caches it under `~/.claude/session-labels/`, and refreshes it in a throttled, detached background job so the bar never blocks on AppleScript. The per-project color is a stable hash (`cksum`) of the git root, or the working directory outside a repo.
 
 ## Customize
 
 Open `statusline.sh`:
 
 - **Colors** — edit `proj_hues=(...)`, the 8 ANSI-256 color codes used per project.
-- **Refresh cadence** — the session-name refresh is throttled to 8 seconds; change the `-ge 8` threshold.
 
 ## Uninstall
 
