@@ -36,12 +36,13 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
 
 # Ultracode (xhigh + workflow orchestration) reports as plain "xhigh" in stdin,
 # so when at xhigh we scan the whole transcript for the most recent /effort command;
-# the grep prefilter keeps that fast on multi-MB transcripts. jq then scopes it to
+# the grep prefilter keeps that fast on multi-MB transcripts (LC_ALL=C: macOS grep is
+# ~5x slower in a UTF-8 locale; the needle is ASCII). jq then scopes it to
 # the <local-command-stdout> wrapper + user-string lines, so quoted mentions in chat
 # or tool output can't false-match. Last command wins (switching away
 # self-corrects); falls back to plain xhigh if the format ever changes.
 if [ "$effort" = "xhigh" ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
-  last_effort=$(grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null | jq -r '
+  last_effort=$(LC_ALL=C grep -F '<local-command-stdout>Set effort level to' "$transcript_path" 2>/dev/null | jq -r '
     select(.type == "user")
     | .message.content
     | select(type == "string")
