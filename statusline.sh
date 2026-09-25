@@ -4,7 +4,8 @@
 # --- Parse input JSON in one awk pass (\x1f separator preserves empty fields) ---
 # awk is POSIX and ships with every macOS and Linux, so there is nothing to install.
 IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_output \
-  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_name proj_idx < <(LC_ALL=C awk -v FS=$'\x1f' '
+  fh_pct fh_reset sd_pct sd_reset transcript_path effort session_name proj_idx \
+  cache_seen cache_exp cache_ttl < <(LC_ALL=C awk -v FS=$'\x1f' '
   # A tiny JSON reader: walks the tokens tracking the path of every value (.a.b, arrays
   # as []), like jq, so key order, whitespace, new fields and nesting do not matter.
   # String at path p, unescaped, with control chars dropped: a \x1f or newline in a value
@@ -53,12 +54,15 @@ IFS=$'\x1f' read -r cwd model model_id used_pct ctx_size total_input total_outpu
     # per-project color index: stable string hash of the launch dir
     x = dflt(str(".workspace.project_dir"), str(".cwd")); h = 0
     for (i = 1; i <= length(x); i++) h = (h * 31 + ord[substr(x, i, 1)]) % 65521
+    # prompt cache lifetime ("1h" / "5m") in seconds, digits only
+    x = str(".prompt_cache.ttl"); ttl = x ~ /^[1-9][0-9]?[mh]$/ ? substr(x, 1, length(x) - 1) * (x ~ /h$/ ? 3600 : 60) : ""
     printf "%s", dflt(str(".workspace.current_dir"), str(".cwd")) FS str(".model.display_name") FS str(".model.id") FS \
       num(".context_window.used_percentage", 1) FS num(".context_window.context_window_size") FS \
       dflt(num(".context_window.total_input_tokens"), 0) FS dflt(num(".context_window.total_output_tokens"), 0) FS \
       num(".rate_limits.five_hour.used_percentage", 1) FS num(".rate_limits.five_hour.resets_at") FS \
       num(".rate_limits.seven_day.used_percentage", 1) FS num(".rate_limits.seven_day.resets_at") FS \
-      str(".transcript_path") FS str(".effort.level") FS str(".session_name") FS h % 8
+      str(".transcript_path") FS str(".effort.level") FS str(".session_name") FS h % 8 FS \
+      (v[".prompt_cache.caching_observed"] == "true") FS num(".prompt_cache.expires_at") FS ttl
   }')
 
 # effort.level (CC >= 2.1.122) is the live session value: tracks mid-session
@@ -206,6 +210,22 @@ rate_limit() {
 }
 rate_limit "$fh_pct" "$fh_reset" "5h"
 rate_limit "$sd_pct" "$sd_reset" "7d"
+
+# Prompt cache of the main conversation: time left before it expires (1h on a Claude
+# subscription, 5m otherwise), colored like the meters by how much of its lifetime has
+# passed. Claude Code re-runs the status line at expiry; the installer's refreshInterval
+# keeps the countdown moving while the session is idle.
+if [ "$cache_seen" = 1 ]; then
+  [ -n "$line2" ] && line2+="  "
+  countdown "$cache_exp"   # empty once expired, or when the last reply cached nothing
+  if [ -n "$cd" ]; then
+    pct_color $(( 100 - (cache_exp - now) * 100 / ${cache_ttl:-3600} ))
+    [ "$cd" = 0m ] && cd="<1m"
+    line2+="${c}cache ${cd}${reset}"
+  else
+    line2+="${red}⚠ cache expired${reset}"
+  fi
+fi
 
 # --- Line 0: session name (/rename or Claude's auto-generated title), colored per project ---
 if [ -n "$session_name" ]; then

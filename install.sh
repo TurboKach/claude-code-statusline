@@ -34,7 +34,8 @@ chmod +x "$DEST"
 # --- point settings.json at it (preserve other settings, back up first) ---
 CMD="bash $DEST"
 cmd_json=${CMD//\\/\\\\}; cmd_json=${cmd_json//\"/\\\"}   # JSON-escape \ and "
-entry="\"statusLine\": { \"type\": \"command\", \"command\": \"$cmd_json\" }"
+# refreshInterval: re-render every 60 s so the countdowns keep moving while idle
+entry="\"statusLine\": { \"type\": \"command\", \"command\": \"$cmd_json\", \"refreshInterval\": 60 }"
 if [ -f "$SETTINGS" ]; then
   # A plain-text edit, no jq: statusLine is a flat object, so the regex spans all of it
   # (strings are matched whole, so a { or } inside the old command can't cut it short).
