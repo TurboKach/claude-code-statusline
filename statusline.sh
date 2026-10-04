@@ -120,13 +120,16 @@ countdown() {   # sets cd
 # Append the effort bar to line1: one cell per level the model supports ($2...),
 # the first `pos` ($1) each in its own level's color and the rest dim. Trailing dim
 # cells are the model's remaining headroom, so a full bar means "maxed for this model".
+# Cell heights spread over all 8 bars (rounded up), so the top level is always a full
+# block: 5 levels ▁▃▅▇█, 4 levels ▁▄▆█, 3 levels ▁▅█.
 effort_bar() {
   local pos=$1 i=0 l v
-  local chars=("▁" "▃" "▅" "▇" "█")
+  local bars=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
   shift
+  local n=$#
   for l in "$@"; do
     if [ "$i" -lt "$pos" ]; then v=eff_$l; line1+=${!v}; else line1+=$dim_grey; fi
-    line1+=${chars[$i]}; i=$((i + 1))
+    line1+=${bars[(i * 7 + n - 2) / (n - 1)]}; i=$((i + 1))
   done
   line1+=$reset
 }
@@ -194,6 +197,7 @@ if [ -n "$used_pct" ] && [ -n "$ctx_size" ]; then
   else max_label="${max_k}k"
   fi
   pct_color "$used_pct"
+  [ "$used_pct" -ge 90 ] && line2+="${c}⚠ "   # compact soon
   line2+="${c}${used_k}k/${max_label} (${used_pct}%)${reset}"
 fi
 
