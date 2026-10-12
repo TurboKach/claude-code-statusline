@@ -5,8 +5,9 @@
 # update, so this hook (1) keeps a stable symlink in ${CLAUDE_PLUGIN_DATA} that
 # points at the current statusline.sh and (2) adds `statusLine` to the user's
 # settings.json whenever it has none. A different existing statusLine is replaced
-# once per install, and only when the plugin option replace_existing is on. The
-# settings edit copies install.sh's add and replace branches (plain-text, no jq).
+# only when the plugin option replace_existing is on and the hook has not yet
+# written its own block in this install (any successful write sets the marker),
+# so a bar the user sets later is never replaced. The settings edit copies install.sh's add and replace branches (plain-text, no jq).
 #
 # Claude Code rewrites settings.json from its in-memory copy and keeps an external
 # edit only if its file watcher saw it. The watcher starts about when this hook
@@ -42,7 +43,7 @@ main() {
   fi
 
   # --- settings ---
-  local marker="$data/.statusline-replaced"   # a different statusLine was replaced once
+  local marker="$data/.statusline-written"   # this install has written its block once
   local sq="'" esc="'\\''" q cmd cmd_json
   q=${data//$sq/$esc}
   cmd="bash '$q/statusline.sh'"
@@ -69,7 +70,7 @@ main() {
   # Attempt 1 decides without sleeping; if it needs a write, sleep, then attempt 2
   # reads settings.json again and decides and writes from that fresh read.
   for attempt in 1 2; do
-    local json="" new="" had_file=0 action=add
+    local json="" new="" had_file=0
     if [ -e "$target" ]; then
       had_file=1
       if ! json=$(<"$target") 2>/dev/null; then
@@ -94,7 +95,6 @@ main() {
         fi
         [ -e "$marker" ] && return 0
         if [ -n "$m" ]; then
-          action=replace
           pre=${json%%"$m"*}
           new="$pre$entry${json#*"$m"}"
         else
@@ -122,7 +122,7 @@ main() {
       continue
     fi
     if write_settings "$target" "$new" "$had_file"; then
-      [ "$action" = replace ] && touch "$marker" 2>/dev/null
+      touch "$marker" 2>/dev/null
     else
       notice writefail "could not write $cfg. Add the block by hand, see the README"
     fi

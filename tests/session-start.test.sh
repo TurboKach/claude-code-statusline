@@ -102,7 +102,7 @@ put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged byte-for-byte" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "no replaced marker" test ! -e "$D/.statusline-replaced"
+yes "no written marker" test ! -e "$D/.statusline-written"
 run; silent
 yes "second run unchanged" same "$C/settings.json" "$T/$CASE/orig"
 
@@ -115,7 +115,7 @@ yes "model kept" has "$C/settings.json" '"model": "opus"'
 yes "theme kept" has "$C/settings.json" '"theme": "dark"'
 check "one backup" 1 "$(nbak)"
 yes "backup equals original" same "$(ls "$C"/settings.json.bak.*)" "$T/$CASE/orig"
-yes "replaced marker" test -e "$D/.statusline-replaced"
+yes "written marker" test -e "$D/.statusline-written"
 cp "$C/settings.json" "$T/$CASE/after"
 run; silent
 yes "second run: no write" same "$C/settings.json" "$T/$CASE/after"
@@ -150,12 +150,12 @@ OPT=1; run; silent
 yes "replaced at next run" has "$C/settings.json" "bash '$D/statusline.sh'"
 check "one backup" 1 "$(nbak)"
 
-# replace happens once per install; a different bar set later is left alone, no notice
+# replace happens before the plugin's first write; a different bar set later is left alone, no notice
 setup replace_once_then_left_alone
 put "$C/settings.json" "$OLD"
 OPT=true; run; silent
 yes "first replace done" has "$C/settings.json" "bash '$D/statusline.sh'"
-yes "replaced marker" test -e "$D/.statusline-replaced"
+yes "written marker" test -e "$D/.statusline-written"
 put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
 run; silent
 yes "later different bar not replaced" same "$C/settings.json" "$T/$CASE/orig"
@@ -163,6 +163,18 @@ run resume; silent
 yes "no notice marker" test -z "$(ls -A "$D" | grep notice)"
 OPT=false; run; notice "$(msg_existing "$C/settings.json")"
 yes "option off: still unchanged, one notice" same "$C/settings.json" "$T/$CASE/orig"
+
+# once the plugin has written its bar (an add counts), a different bar set later is never replaced
+setup add_then_user_bar_option_on
+put "$C/settings.json" "$OTHER"
+OPT=true; run; silent
+yes "block added" has "$C/settings.json" "bash '$D/statusline.sh'"
+yes "written marker after an add" test -e "$D/.statusline-written"
+put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
+run; silent
+yes "later different bar not replaced (option on)" same "$C/settings.json" "$T/$CASE/orig"
+OPT=false; run; notice "$(msg_existing "$C/settings.json")"
+yes "option off: unchanged, one notice" same "$C/settings.json" "$T/$CASE/orig"
 
 setup unmatched_option_on
 put "$C/settings.json" '{ "statusLine": "bash /x.sh", "model": "opus" }'; cp "$C/settings.json" "$T/$CASE/orig"
@@ -232,6 +244,7 @@ run; notice "$(msg_writefail "$C/settings.json")"
 yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
 check "failed write leaves no backup" 0 "$(nbak)"
 check "failed write leaves no temp file" 0 "$(ls -A "$C" | grep -c '^\.settings\.')"
+yes "failed write: no written marker" test ! -e "$D/.statusline-written"
 run; silent
 
 # a missing statusLine is added back in every session (user removal, or Claude Code
@@ -331,7 +344,7 @@ setup ours_in_env_other_bar
 put "$C/settings.json" "{ \"env\": { \"X\": \"bash '$D/statusline.sh'\" }, \"statusLine\": { \"type\": \"command\", \"command\": \"echo other-bar\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
-yes "no marker" test ! -e "$D/.statusline-replaced"
+yes "no marker" test ! -e "$D/.statusline-written"
 OPT=true; run; silent
 yes "replaced with option on" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\""
 yes "other bar gone" test "$(grep -c 'echo other-bar' "$C/settings.json")" = 0
@@ -340,7 +353,7 @@ setup ours_in_other_field
 put "$C/settings.json" "{ \"statusLine\": { \"type\": \"command\", \"command\": \"echo x\", \"padding\": \"bash '$D/statusline.sh'\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged: our text outside the command value is not ours" same "$C/settings.json" "$T/$CASE/orig"
-yes "no marker" test ! -e "$D/.statusline-replaced"
+yes "no marker" test ! -e "$D/.statusline-written"
 
 # ---------- multi-line (pretty-printed) settings, as Claude Code rewrites them ----------
 setup multiline_option_on
@@ -352,13 +365,13 @@ yes "model kept" has "$C/settings.json" '"model": "opus"'
 yes "theme kept" has "$C/settings.json" '"theme": "dark"'
 check "one backup" 1 "$(nbak)"
 yes "backup equals original" same "$(ls "$C"/settings.json.bak.*)" "$T/$CASE/orig"
-yes "replaced marker" test -e "$D/.statusline-replaced"
+yes "written marker" test -e "$D/.statusline-written"
 setup multiline_option_off
 put "$C/settings.json" "$MULTI"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged byte-for-byte" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "no marker" test ! -e "$D/.statusline-replaced"
+yes "no marker" test ! -e "$D/.statusline-written"
 setup multiline_already_ours
 put "$C/settings.json" "{
   \"model\": \"opus\",
