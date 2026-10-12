@@ -1,0 +1,19 @@
+{
+  "name": "bash-statusline",
+  "version": "1.0.0",
+  "description": "A three-line Claude Code status line in one bash script: model, git, context, rate limits and a prompt-cache countdown. No Node, no jq.",
+  "author": {
+    "name": "TurboKach"
+  },
+  "repository": "https://github.com/TurboKach/claude-code-statusline",
+  "license": "MIT",
+  "keywords": ["statusline", "status-line", "bash", "rate-limits", "context"],
+  "userConfig": {
+    "replace_existing": {
+      "type": "boolean",
+      "title": "Replace an existing status line",
+      "description": "Replace a statusLine already in settings.json with this one (a backup of settings.json is kept)",
+      "default": false
+    }
+  }
+}

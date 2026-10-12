@@ -1,0 +1,16 @@
+{
+  "name": "cc-statusline",
+  "owner": {
+    "name": "TurboKach"
+  },
+  "plugins": [
+    {
+      "name": "bash-statusline",
+      "source": "./",
+      "description": "A three-line Claude Code status line in one bash script: model, git, context, rate limits and a prompt-cache countdown. No Node, no jq."
+    }
+  ],
+  "metadata": {
+    "description": "Marketplace that lists this repo as its one plugin"
+  }
+}
