@@ -64,7 +64,7 @@ claude plugin update bash-statusline@cc-statusline
 
 Then restart Claude Code. Run the marketplace update first: `plugin update` alone does not see a new version until the marketplace is refreshed.
 
-Maintainers: a release is a `version` bump in `.claude-plugin/plugin.json`. Without one, no update ships.
+Maintainers: `main` is the release branch. New installs copy whatever is on `main`, so work on a branch and merge only tested changes, together with a `version` bump in `.claude-plugin/plugin.json`. Existing installs update only when that version changes.
 
 **Clone.** Run `git pull`.
 
