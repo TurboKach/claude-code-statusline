@@ -4,9 +4,15 @@
 # A plugin cannot set `statusLine`, and ${CLAUDE_PLUGIN_ROOT} changes on every
 # update, so this hook (1) keeps a stable symlink in ${CLAUDE_PLUGIN_DATA} that
 # points at the current statusline.sh and (2) adds `statusLine` to the user's
-# settings.json once. An existing statusLine is replaced only when the plugin
-# option replace_existing is on. The settings edit copies install.sh's add and
-# replace branches (plain-text, no jq).
+# settings.json whenever it has none. A different existing statusLine is replaced
+# once per install, and only when the plugin option replace_existing is on. The
+# settings edit copies install.sh's add and replace branches (plain-text, no jq).
+#
+# Claude Code rewrites settings.json from its in-memory copy and keeps an external
+# edit only if its file watcher saw it. The watcher starts about when this hook
+# ends, so a write needs a delay (2 s) to land after it; the hook reads, decides
+# and writes only after that delay (a write that was not needed does not sleep).
+# A missing block is added back in a later session if Claude Code still drops it.
 #
 # Contract: exit code is always 0; stdout is empty, except for one JSON
 # `systemMessage` notice (once per reason) when the bar could not be set up.
@@ -35,10 +41,8 @@ main() {
     [ "$(readlink "$link" 2>/dev/null)" = "$root/statusline.sh" ] || return 0
   fi
 
-  # --- settings: once per install ---
-  local marker="$data/.statusline-added"
-  [ -e "$marker" ] && return 0
-
+  # --- settings ---
+  local marker="$data/.statusline-replaced"   # a different statusLine was replaced once
   local sq="'" esc="'\\''" q cmd cmd_json
   q=${data//$sq/$esc}
   cmd="bash '$q/statusline.sh'"
@@ -58,60 +62,71 @@ main() {
     true|1) on=1 ;;
   esac
 
-  local json="" new="" had_file=0
-  if [ -e "$target" ]; then
-    had_file=1
-    if ! json=$(<"$target") 2>/dev/null; then
-      notice writefail "could not read $cfg. Add the block by hand, see the README"
-      return 0
-    fi
-    local re='"statusLine"[[:space:]]*:[[:space:]]*\{([^{}"]|"([^"\\]|\\.)*")*\}'
-    local key_re='"statusLine"[[:space:]]*:' cmd_re='"command"[[:space:]]*:[[:space:]]*"'
-    local obj_re='^[[:space:]]*\{' empty_re='^[[:space:]]*(\{[[:space:]]*\})?[[:space:]]*$'
-    local m="" pre rest
-    # only a "statusLine" used as an object key counts; a string value is never followed by ':'
-    if [[ $json =~ $key_re ]]; then
-      [[ $json =~ $re ]] && m=${BASH_REMATCH[0]}
-      # ours = the command value of the statusLine block the replace below would match
-      if [ -n "$m" ] && [[ $m =~ $cmd_re ]]; then
-        rest=${m#*"${BASH_REMATCH[0]}"}
-        if [[ $rest == "$cmd_json\""* ]]; then
-          touch "$marker" 2>/dev/null
+  # BASH_STATUSLINE_TEST_DELAY: test-only override of the write delay (seconds).
+  local delay=${BASH_STATUSLINE_TEST_DELAY:-2} attempt
+  [[ $delay =~ ^[0-9]+(\.[0-9]+)?$ ]] || delay=2
+
+  # Attempt 1 decides without sleeping; if it needs a write, sleep, then attempt 2
+  # reads settings.json again and decides and writes from that fresh read.
+  for attempt in 1 2; do
+    local json="" new="" had_file=0 action=add
+    if [ -e "$target" ]; then
+      had_file=1
+      if ! json=$(<"$target") 2>/dev/null; then
+        notice writefail "could not read $cfg. Add the block by hand, see the README"
+        return 0
+      fi
+      local re='"statusLine"[[:space:]]*:[[:space:]]*\{([^{}"]|"([^"\\]|\\.)*")*\}'
+      local key_re='"statusLine"[[:space:]]*:' cmd_re='"command"[[:space:]]*:[[:space:]]*"'
+      local obj_re='^[[:space:]]*\{' empty_re='^[[:space:]]*(\{[[:space:]]*\})?[[:space:]]*$'
+      local m="" pre rest
+      # only a "statusLine" used as an object key counts; a string value is never followed by ':'
+      if [[ $json =~ $key_re ]]; then
+        [[ $json =~ $re ]] && m=${BASH_REMATCH[0]}
+        # ours = the command value of the statusLine block the replace below would match
+        if [ -n "$m" ] && [[ $m =~ $cmd_re ]]; then
+          rest=${m#*"${BASH_REMATCH[0]}"}
+          [[ $rest == "$cmd_json\""* ]] && return 0
+        fi
+        if [ "$on" -ne 1 ]; then
+          notice existing "a status line is already set in $cfg and was left alone. To use this one, turn on 'Replace an existing status line' in /plugin -> Installed -> bash-statusline -> Configure options, then start a new session"
           return 0
         fi
-      fi
-      if [ "$on" -ne 1 ]; then
-        notice existing "a status line is already set in $cfg and was left alone. To use this one, turn on 'Replace an existing status line' in /plugin -> Installed -> bash-statusline -> Configure options, then start a new session"
-        return 0
-      fi
-      if [ -n "$m" ]; then
-        pre=${json%%"$m"*}
-        new="$pre$entry${json#*"$m"}"
+        [ -e "$marker" ] && return 0
+        if [ -n "$m" ]; then
+          action=replace
+          pre=${json%%"$m"*}
+          new="$pre$entry${json#*"$m"}"
+        else
+          notice unmatched "the statusLine in $cfg cannot be replaced automatically. Add the block by hand, see the README"
+          return 0
+        fi
+      elif [[ $json =~ $empty_re ]]; then
+        new="{ $entry }"
+      elif [[ $json =~ $obj_re ]]; then
+        pre=${json%%\{*}
+        new="$pre{
+    $entry,${json#*\{}"
       else
-        notice unmatched "the statusLine in $cfg cannot be replaced automatically. Add the block by hand, see the README"
+        notice notobject "$cfg is not a JSON object. Fix it or add the block by hand, see the README"
         return 0
       fi
-    elif [[ $json =~ $empty_re ]]; then
-      new="{ $entry }"
-    elif [[ $json =~ $obj_re ]]; then
-      pre=${json%%\{*}
-      new="$pre{
-  $entry,${json#*\{}"
     else
-      notice notobject "$cfg is not a JSON object. Fix it or add the block by hand, see the README"
-      return 0
+      new="{
+    $entry
+  }"
     fi
-  else
-    new="{
-  $entry
-}"
-  fi
 
-  if write_settings "$target" "$new" "$had_file"; then
-    touch "$marker" 2>/dev/null
-  else
-    notice writefail "could not write $cfg. Add the block by hand, see the README"
-  fi
+    if [ "$attempt" = 1 ]; then
+      sleep "$delay" 2>/dev/null
+      continue
+    fi
+    if write_settings "$target" "$new" "$had_file"; then
+      [ "$action" = replace ] && touch "$marker" 2>/dev/null
+    else
+      notice writefail "could not write $cfg. Add the block by hand, see the README"
+    fi
+  done
   return 0
 }
 

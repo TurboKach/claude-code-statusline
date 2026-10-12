@@ -10,7 +10,7 @@ Most Claude Code status lines are small apps: a Node package run through `npx`, 
 
 - **One file.** `statusline.sh` is ~170 lines of Bash and awk plus comments. Read it in ten minutes, change it in place.
 - **Fast.** ~8 ms per render on an Apple M4 Pro with the stock macOS bash, under 3 MB peak memory — and ~1.5 ms of that is bash itself starting. A single `awk` pass parses the whole session JSON, and the git branch is read straight from `.git/HEAD`, with no `git` process.
-- **Nothing in the background.** No daemon, no cache files, no config file, no network calls. It runs only when Claude Code asks for a redraw: after each message, and once a minute (`refreshInterval`) so the countdowns keep moving while you're idle. The plugin install adds one short script that runs once at session start (about 45 ms) and nothing per render.
+- **Nothing in the background.** No daemon, no cache files, no config file, no network calls. It runs only when Claude Code asks for a redraw: after each message, and once a minute (`refreshInterval`) so the countdowns keep moving while you're idle. The plugin install adds one short script that runs once at session start (about 45 ms, plus a 2-second background wait in the session that writes the block) and nothing per render.
 - **Uses what Claude Code already sends.** Session name, effort level, context window, rate limits and prompt cache all come from the JSON on stdin — no API calls, no transcript parsing (the one exception: at `xhigh` effort, a fast grep of the transcript to tell ultracode apart).
 - **Nothing to install.** Needs only bash, awk and grep, which every macOS and Linux system already has — no `jq`, no Homebrew. Tested with bash 3.2 through 5.3 and the macOS, GNU, mawk and BusyBox awks.
 
@@ -35,9 +35,9 @@ claude plugin install bash-statusline@cc-statusline --scope user
 
 Then start a new session. The bar appears there, not in the one you installed from.
 
-At session start, a small hook points a link in the plugin's data folder at the current version of `statusline.sh`. The first time, it also adds a `statusLine` block to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), with a timestamped `settings.json.bak.*` backup. If you remove the block later, the plugin does not add it back.
+At session start, a small hook points a link in the plugin's data folder at the current version of `statusline.sh`. When the file has no `statusLine`, it also adds the block to `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), with a timestamped `settings.json.bak.*` backup. It waits about 2 seconds first, so Claude Code's own settings watcher sees the change, and that wait runs in the background. While the plugin is enabled it adds the block back in any session where none is set. To stop using the bar, uninstall or disable the plugin, then remove the block.
 
-If you already have a `statusLine`, the plugin leaves it alone and shows a one-time message on how to switch. To replace it, turn on the option "Replace an existing status line": in `/plugin` go to Installed → bash-statusline → Configure options, or run `claude plugin configure bash-statusline@cc-statusline`. Then start a new session. The shell install does not ask, so to replace an existing bar there, add `--config replace_existing=true` to the `claude plugin install` command.
+If you already have a `statusLine`, the plugin leaves it alone and shows a one-time message on how to switch. To replace it, turn on the option "Replace an existing status line": in `/plugin` go to Installed → bash-statusline → Configure options, or run `claude plugin configure bash-statusline@cc-statusline`. The plugin replaces a bar once per install; a different bar you set later is left alone. Then start a new session. The shell install does not ask, so to replace an existing bar there, add `--config replace_existing=true` to the `claude plugin install` command.
 
 ### From a clone
 

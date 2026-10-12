@@ -35,7 +35,7 @@ setup() {
   R="$T/$1/root"; D="$T/$1/data"; C="$T/$1/cfg"
   mkdir -p "$R" "$C"
   printf '#!/bin/sh\necho RENDERED\n' > "$R/statusline.sh"
-  RV=$R DV=$D CV=$C OPT="" RUN_PATH=$PATH
+  RV=$R DV=$D CV=$C OPT="" RUN_PATH=$PATH DELAY=0   # DELAY: the hook's test-only write delay, 0 = no sleep
   mkdir -p "$T/home"
 }
 put() { printf '%s\n' "$2" > "$1"; }
@@ -46,7 +46,7 @@ run() {
   local s=${1-startup} args=() input=""
   [ -n "$s" ] && input=$(printf '{"hook_event_name":"SessionStart","source":"%s"}' "$s")
   args+=(-u CLAUDE_PLUGIN_ROOT -u CLAUDE_PLUGIN_DATA -u CLAUDE_PLUGIN_OPTION_REPLACE_EXISTING)
-  args+=(HOME="$T/home" PATH="$RUN_PATH" CLAUDE_CONFIG_DIR="$CV")
+  args+=(HOME="$T/home" PATH="$RUN_PATH" CLAUDE_CONFIG_DIR="$CV" BASH_STATUSLINE_TEST_DELAY="$DELAY")
   [ -n "$RV" ] && args+=(CLAUDE_PLUGIN_ROOT="$RV")
   [ -n "$DV" ] && args+=(CLAUDE_PLUGIN_DATA="$DV")
   [ -n "$OPT" ] && args+=(CLAUDE_PLUGIN_OPTION_REPLACE_EXISTING="$OPT")
@@ -70,7 +70,6 @@ yes "settings created" test -f "$C/settings.json"
 yes "entry has our command" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\""
 yes "refreshInterval" has "$C/settings.json" '"refreshInterval": 60'
 check "link target" "$R/statusline.sh" "$(readlink "$D/statusline.sh")"
-yes "marker" test -e "$D/.statusline-added"
 check "no backup (nothing to back up)" 0 "$(nbak)"
 check "rendered through link" RENDERED "$(sh -c "bash '$D/statusline.sh'")"
 
@@ -103,7 +102,7 @@ put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged byte-for-byte" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "no set-once marker" test ! -e "$D/.statusline-added"
+yes "no replaced marker" test ! -e "$D/.statusline-replaced"
 run; silent
 yes "second run unchanged" same "$C/settings.json" "$T/$CASE/orig"
 
@@ -116,7 +115,7 @@ yes "model kept" has "$C/settings.json" '"model": "opus"'
 yes "theme kept" has "$C/settings.json" '"theme": "dark"'
 check "one backup" 1 "$(nbak)"
 yes "backup equals original" same "$(ls "$C"/settings.json.bak.*)" "$T/$CASE/orig"
-yes "marker" test -e "$D/.statusline-added"
+yes "replaced marker" test -e "$D/.statusline-replaced"
 cp "$C/settings.json" "$T/$CASE/after"
 run; silent
 yes "second run: no write" same "$C/settings.json" "$T/$CASE/after"
@@ -141,7 +140,6 @@ cp "$C/settings.json" "$T/$CASE/orig"
 run; silent
 yes "no write" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "marker touched" test -e "$D/.statusline-added"
 OPT=true; run; silent
 yes "still no write with option on" same "$C/settings.json" "$T/$CASE/orig"
 
@@ -152,12 +150,19 @@ OPT=1; run; silent
 yes "replaced at next run" has "$C/settings.json" "bash '$D/statusline.sh'"
 check "one backup" 1 "$(nbak)"
 
-setup user_changed_after_marker
-put "$C/settings.json" "$OTHER"
+# replace happens once per install; a different bar set later is left alone, no notice
+setup replace_once_then_left_alone
+put "$C/settings.json" "$OLD"
 OPT=true; run; silent
+yes "first replace done" has "$C/settings.json" "bash '$D/statusline.sh'"
+yes "replaced marker" test -e "$D/.statusline-replaced"
 put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
 run; silent
-yes "later statusLine not replaced" same "$C/settings.json" "$T/$CASE/orig"
+yes "later different bar not replaced" same "$C/settings.json" "$T/$CASE/orig"
+run resume; silent
+yes "no notice marker" test -z "$(ls -A "$D" | grep notice)"
+OPT=false; run; notice "$(msg_existing "$C/settings.json")"
+yes "option off: still unchanged, one notice" same "$C/settings.json" "$T/$CASE/orig"
 
 setup unmatched_option_on
 put "$C/settings.json" '{ "statusLine": "bash /x.sh", "model": "opus" }'; cp "$C/settings.json" "$T/$CASE/orig"
@@ -215,7 +220,6 @@ else
   chmod 755 "$C"
   yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
   check "no backup" 0 "$(nbak)"
-  yes "no marker" test ! -e "$D/.statusline-added"
 fi
 
 setup mv_fails
@@ -228,16 +232,30 @@ run; notice "$(msg_writefail "$C/settings.json")"
 yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
 check "failed write leaves no backup" 0 "$(nbak)"
 check "failed write leaves no temp file" 0 "$(ls -A "$C" | grep -c '^\.settings\.')"
-yes "no marker" test ! -e "$D/.statusline-added"
 run; silent
 
+# a missing statusLine is added back in every session (user removal, or Claude Code
+# rewriting settings.json from its in-memory copy)
 setup removed_by_user
 put "$C/settings.json" "$OTHER"
 run; silent
-put "$C/settings.json" "$OTHER"; cp "$C/settings.json" "$T/$CASE/orig"
+put "$C/settings.json" "$OTHER"
 run; silent
-yes "not re-added" same "$C/settings.json" "$T/$CASE/orig"
-check "backups from the first add only" 1 "$(nbak)"
+yes "re-added after the user removed it" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\""
+yes "model kept" has "$C/settings.json" '"model": "opus"'
+setup clobbered_by_claude
+put "$C/settings.json" "$OTHER"
+run; silent
+put "$C/settings.json" '{
+  "model": "opus",
+  "effortLevel": "high"
+}'
+run; silent
+yes "re-added after a clobber" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\""
+yes "clobbering write's key kept" has "$C/settings.json" '"effortLevel": "high"'
+cp "$C/settings.json" "$T/$CASE/after"
+run; silent
+yes "present again: no write" same "$C/settings.json" "$T/$CASE/after"
 
 setup root_moved
 put "$C/settings.json" "$OTHER"
@@ -298,7 +316,6 @@ yes "added although the text appears as a value" has "$C/settings.json" "\"comma
 yes "env kept" has "$C/settings.json" '"env": {"X":"statusLine"}'
 yes "model kept" has "$C/settings.json" '"model": "opus"'
 check "one backup" 1 "$(nbak)"
-yes "marker" test -e "$D/.statusline-added"
 setup value_not_key_spaced_key
 put "$C/settings.json" '{ "env": {"X":"statusLine"}, "statusLine" : { "type": "command", "command": "x" } }'; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
@@ -310,12 +327,11 @@ run; silent
 yes "entry added" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\""
 yes "env kept" has "$C/settings.json" '"model": "opus"'
 check "one backup" 1 "$(nbak)"
-yes "marker after the add" test -e "$D/.statusline-added"
 setup ours_in_env_other_bar
 put "$C/settings.json" "{ \"env\": { \"X\": \"bash '$D/statusline.sh'\" }, \"statusLine\": { \"type\": \"command\", \"command\": \"echo other-bar\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
-yes "no marker" test ! -e "$D/.statusline-added"
+yes "no marker" test ! -e "$D/.statusline-replaced"
 OPT=true; run; silent
 yes "replaced with option on" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\""
 yes "other bar gone" test "$(grep -c 'echo other-bar' "$C/settings.json")" = 0
@@ -324,7 +340,7 @@ setup ours_in_other_field
 put "$C/settings.json" "{ \"statusLine\": { \"type\": \"command\", \"command\": \"echo x\", \"padding\": \"bash '$D/statusline.sh'\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged: our text outside the command value is not ours" same "$C/settings.json" "$T/$CASE/orig"
-yes "no marker" test ! -e "$D/.statusline-added"
+yes "no marker" test ! -e "$D/.statusline-replaced"
 
 # ---------- multi-line (pretty-printed) settings, as Claude Code rewrites them ----------
 setup multiline_option_on
@@ -336,13 +352,13 @@ yes "model kept" has "$C/settings.json" '"model": "opus"'
 yes "theme kept" has "$C/settings.json" '"theme": "dark"'
 check "one backup" 1 "$(nbak)"
 yes "backup equals original" same "$(ls "$C"/settings.json.bak.*)" "$T/$CASE/orig"
-yes "marker" test -e "$D/.statusline-added"
+yes "replaced marker" test -e "$D/.statusline-replaced"
 setup multiline_option_off
 put "$C/settings.json" "$MULTI"; cp "$C/settings.json" "$T/$CASE/orig"
 run; notice "$(msg_existing "$C/settings.json")"
 yes "unchanged byte-for-byte" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "no marker" test ! -e "$D/.statusline-added"
+yes "no marker" test ! -e "$D/.statusline-replaced"
 setup multiline_already_ours
 put "$C/settings.json" "{
   \"model\": \"opus\",
@@ -355,7 +371,6 @@ put "$C/settings.json" "{
 run; silent
 yes "no write" same "$C/settings.json" "$T/$CASE/orig"
 check "no backup" 0 "$(nbak)"
-yes "marker touched" test -e "$D/.statusline-added"
 OPT=true; run; silent
 yes "still no write with option on" same "$C/settings.json" "$T/$CASE/orig"
 
@@ -368,7 +383,6 @@ yes "settings.json is valid JSON" jvalid "$C/settings.json"
 cmd=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"], end="")' "$C/settings.json" 2>/dev/null)
 check "command decodes to the real path" "bash '$D/statusline.sh'" "$cmd"
 check "command runs via sh -c" RENDERED "$(sh -c "$cmd")"
-yes "marker" test -e "$D/.statusline-added"
 setup control_chars_cfg_notice
 C="$T/$CASE/c"$'\t'"fg"$'\r'"x"$'\037'; CV=$C; mkdir -p "$C"
 put "$C/settings.json" "$OLD"
@@ -376,6 +390,64 @@ run
 yes "notice is valid JSON" jmsg_ok "$OUT"
 check "notice text decodes to the real path" "bash-statusline: not set up, a status line is already set in $C/settings.json and was left alone. To use this one, turn on 'Replace an existing status line' in /plugin -> Installed -> bash-statusline -> Configure options, then start a new session." "$(jmsg "$OUT")"
 case $OUT in *$'\t'*|*$'\r'*|*$'\037'*) bad "raw control character in the notice" ;; *) ok ;; esac
+
+# ---------- delay: the write lands after Claude Code's settings watcher starts ----------
+now() { python3 -I -c 'import time; print(time.time())'; }
+# hook <outfile>: run the hook with the case's env and a stdin source; prints nothing itself
+hook_bg() {
+  printf '{"hook_event_name":"SessionStart","source":"startup"}' | env -u CLAUDE_PLUGIN_OPTION_REPLACE_EXISTING \
+    HOME="$T/home" PATH="$RUN_PATH" CLAUDE_CONFIG_DIR="$CV" CLAUDE_PLUGIN_ROOT="$RV" CLAUDE_PLUGIN_DATA="$DV" \
+    BASH_STATUSLINE_TEST_DELAY="$DELAY" ${OPT:+CLAUDE_PLUGIN_OPTION_REPLACE_EXISTING="$OPT"} "$BASH" "$HOOK" > "$1" 2>/dev/null
+}
+
+setup delay_write_path
+put "$C/settings.json" "$OTHER"
+DELAY=1; t0=$(now); run; silent; t1=$(now)
+yes "write path takes at least the delay" python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) >= 0.95 else 1)' "$t0" "$t1"
+yes "block written" has "$C/settings.json" "bash '$D/statusline.sh'"
+
+setup delay_no_write_path
+put "$C/settings.json" "{ \"statusLine\": { \"type\": \"command\", \"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\": 60 } }"
+DELAY=3; t0=$(now); run; silent; t1=$(now)
+yes "already ours: no sleep" python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 1.5 else 1)' "$t0" "$t1"
+setup delay_notice_path
+put "$C/settings.json" "$OLD"
+DELAY=3; t0=$(now); run; notice "$(msg_existing "$C/settings.json")"; t1=$(now)
+yes "existing bar, option off: no sleep" python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 1.5 else 1)' "$t0" "$t1"
+
+# the decision and the write use a read taken after the delay
+setup fresh_read_keeps_change
+put "$C/settings.json" "$OTHER"
+DELAY=1
+hook_bg "$T/$CASE/out" & hp=$!
+sleep 0.4
+put "$C/settings.json" '{
+  "model": "opus",
+  "theme": "light"
+}'
+wait $hp
+yes "change made during the delay survives" has "$C/settings.json" '"theme": "light"'
+yes "block added" has "$C/settings.json" "bash '$D/statusline.sh'"
+check "stdout empty" "" "$(cat "$T/$CASE/out")"
+setup fresh_read_user_adds_bar
+put "$C/settings.json" "$OTHER"
+DELAY=1
+hook_bg "$T/$CASE/out" & hp=$!
+sleep 0.4
+put "$C/settings.json" "$OLD"; cp "$C/settings.json" "$T/$CASE/orig"
+wait $hp
+yes "bar set during the delay is left alone (option off)" same "$C/settings.json" "$T/$CASE/orig"
+check "notice from the fresh read" "$(msg_existing "$C/settings.json")" "$(cat "$T/$CASE/out")"
+check "no backup" 0 "$(nbak)"
+setup fresh_read_ours_appears
+put "$C/settings.json" "$OTHER"
+DELAY=1
+hook_bg "$T/$CASE/out" & hp=$!
+sleep 0.4
+put "$C/settings.json" "{ \"statusLine\": { \"type\": \"command\", \"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\": 60 } }"; cp "$C/settings.json" "$T/$CASE/orig"
+wait $hp
+yes "already there after the delay: no write" same "$C/settings.json" "$T/$CASE/orig"
+check "no backup" 0 "$(nbak)"
 
 echo
 echo "executed=$((pass + fail)) passed=$pass failed=$fail skipped=$skipped"
