@@ -278,6 +278,105 @@ sq="'" esc="'\\''"; dq=${D//$sq/$esc}
 check "command text" "bash '$dq/statusline.sh'" "$cmd"
 check "command runs via sh -c" RENDERED "$(sh -c "$cmd")"
 
+# ---------- statusLine as an object key only; "ours" scoped to the block ----------
+MULTI='{
+  "model": "opus",
+  "statusLine": {
+    "type": "command",
+    "command": "echo other-bar"
+  },
+  "theme": "dark"
+}'
+jvalid() { python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$1" 2>/dev/null; }
+jmsg_ok() { jmsg "$1" >/dev/null; }
+jmsg() { python3 -I -c 'import json,sys; sys.stdout.write(json.loads(sys.argv[1])["systemMessage"])' "$1" 2>/dev/null; }
+
+setup value_not_key
+put "$C/settings.json" '{ "env": {"X":"statusLine"}, "permissions": { "allow": ["Bash(statusLine)", "statusLine"] }, "model": "opus" }'
+run; silent
+yes "added although the text appears as a value" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\""
+yes "env kept" has "$C/settings.json" '"env": {"X":"statusLine"}'
+yes "model kept" has "$C/settings.json" '"model": "opus"'
+check "one backup" 1 "$(nbak)"
+yes "marker" test -e "$D/.statusline-added"
+setup value_not_key_spaced_key
+put "$C/settings.json" '{ "env": {"X":"statusLine"}, "statusLine" : { "type": "command", "command": "x" } }'; cp "$C/settings.json" "$T/$CASE/orig"
+run; notice "$(msg_existing "$C/settings.json")"
+yes "spaced key still counts as existing" same "$C/settings.json" "$T/$CASE/orig"
+
+setup ours_only_in_env
+put "$C/settings.json" "{ \"env\": { \"X\": \"bash '$D/statusline.sh'\" }, \"model\": \"opus\" }"
+run; silent
+yes "entry added" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\""
+yes "env kept" has "$C/settings.json" '"model": "opus"'
+check "one backup" 1 "$(nbak)"
+yes "marker after the add" test -e "$D/.statusline-added"
+setup ours_in_env_other_bar
+put "$C/settings.json" "{ \"env\": { \"X\": \"bash '$D/statusline.sh'\" }, \"statusLine\": { \"type\": \"command\", \"command\": \"echo other-bar\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
+run; notice "$(msg_existing "$C/settings.json")"
+yes "unchanged" same "$C/settings.json" "$T/$CASE/orig"
+yes "no marker" test ! -e "$D/.statusline-added"
+OPT=true; run; silent
+yes "replaced with option on" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\", \"refreshInterval\""
+yes "other bar gone" test "$(grep -c 'echo other-bar' "$C/settings.json")" = 0
+yes "env kept" has "$C/settings.json" '"env": {'
+setup ours_in_other_field
+put "$C/settings.json" "{ \"statusLine\": { \"type\": \"command\", \"command\": \"echo x\", \"padding\": \"bash '$D/statusline.sh'\" } }"; cp "$C/settings.json" "$T/$CASE/orig"
+run; notice "$(msg_existing "$C/settings.json")"
+yes "unchanged: our text outside the command value is not ours" same "$C/settings.json" "$T/$CASE/orig"
+yes "no marker" test ! -e "$D/.statusline-added"
+
+# ---------- multi-line (pretty-printed) settings, as Claude Code rewrites them ----------
+setup multiline_option_on
+put "$C/settings.json" "$MULTI"; cp "$C/settings.json" "$T/$CASE/orig"
+OPT=true; run; silent
+yes "other bar gone" test "$(grep -c 'echo other-bar' "$C/settings.json")" = 0
+yes "our command in" has "$C/settings.json" "\"command\": \"bash '$D/statusline.sh'\""
+yes "model kept" has "$C/settings.json" '"model": "opus"'
+yes "theme kept" has "$C/settings.json" '"theme": "dark"'
+check "one backup" 1 "$(nbak)"
+yes "backup equals original" same "$(ls "$C"/settings.json.bak.*)" "$T/$CASE/orig"
+yes "marker" test -e "$D/.statusline-added"
+setup multiline_option_off
+put "$C/settings.json" "$MULTI"; cp "$C/settings.json" "$T/$CASE/orig"
+run; notice "$(msg_existing "$C/settings.json")"
+yes "unchanged byte-for-byte" same "$C/settings.json" "$T/$CASE/orig"
+check "no backup" 0 "$(nbak)"
+yes "no marker" test ! -e "$D/.statusline-added"
+setup multiline_already_ours
+put "$C/settings.json" "{
+  \"model\": \"opus\",
+  \"statusLine\": {
+    \"type\": \"command\",
+    \"command\": \"bash '$D/statusline.sh'\",
+    \"refreshInterval\": 60
+  }
+}"; cp "$C/settings.json" "$T/$CASE/orig"
+run; silent
+yes "no write" same "$C/settings.json" "$T/$CASE/orig"
+check "no backup" 0 "$(nbak)"
+yes "marker touched" test -e "$D/.statusline-added"
+OPT=true; run; silent
+yes "still no write with option on" same "$C/settings.json" "$T/$CASE/orig"
+
+# ---------- control characters in paths never produce invalid JSON ----------
+setup control_chars_data
+D="$T/$CASE/da"$'\t'"ta"$'\n'"x"$'\001'"y"; DV=$D
+put "$C/settings.json" "$OTHER"
+run; silent
+yes "settings.json is valid JSON" jvalid "$C/settings.json"
+cmd=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"], end="")' "$C/settings.json" 2>/dev/null)
+check "command decodes to the real path" "bash '$D/statusline.sh'" "$cmd"
+check "command runs via sh -c" RENDERED "$(sh -c "$cmd")"
+yes "marker" test -e "$D/.statusline-added"
+setup control_chars_cfg_notice
+C="$T/$CASE/c"$'\t'"fg"$'\r'"x"$'\037'; CV=$C; mkdir -p "$C"
+put "$C/settings.json" "$OLD"
+run
+yes "notice is valid JSON" jmsg_ok "$OUT"
+check "notice text decodes to the real path" "bash-statusline: not set up, a status line is already set in $C/settings.json and was left alone. To use this one, turn on 'Replace an existing status line' in /plugin -> Installed -> bash-statusline -> Configure options, then start a new session." "$(jmsg "$OUT")"
+case $OUT in *$'\t'*|*$'\r'*|*$'\037'*) bad "raw control character in the notice" ;; *) ok ;; esac
+
 echo
 echo "executed=$((pass + fail)) passed=$pass failed=$fail skipped=$skipped"
 [ "$fail" -eq 0 ]

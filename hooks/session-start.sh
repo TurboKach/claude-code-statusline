@@ -66,18 +66,25 @@ main() {
       return 0
     fi
     local re='"statusLine"[[:space:]]*:[[:space:]]*\{([^{}"]|"([^"\\]|\\.)*")*\}'
+    local key_re='"statusLine"[[:space:]]*:' cmd_re='"command"[[:space:]]*:[[:space:]]*"'
     local obj_re='^[[:space:]]*\{' empty_re='^[[:space:]]*(\{[[:space:]]*\})?[[:space:]]*$'
-    local m pre
-    if [[ $json == *"$cmd_json"* ]]; then
-      touch "$marker" 2>/dev/null
-      return 0
-    elif [[ $json == *'"statusLine"'* ]]; then
+    local m="" pre rest
+    # only a "statusLine" used as an object key counts; a string value is never followed by ':'
+    if [[ $json =~ $key_re ]]; then
+      [[ $json =~ $re ]] && m=${BASH_REMATCH[0]}
+      # ours = the command value of the statusLine block the replace below would match
+      if [ -n "$m" ] && [[ $m =~ $cmd_re ]]; then
+        rest=${m#*"${BASH_REMATCH[0]}"}
+        if [[ $rest == "$cmd_json\""* ]]; then
+          touch "$marker" 2>/dev/null
+          return 0
+        fi
+      fi
       if [ "$on" -ne 1 ]; then
         notice existing "a status line is already set in $cfg and was left alone. To use this one, turn on 'Replace an existing status line' in /plugin -> Installed -> bash-statusline -> Configure options, then start a new session"
         return 0
       fi
-      if [[ $json =~ $re ]]; then
-        m=${BASH_REMATCH[0]}
+      if [ -n "$m" ]; then
         pre=${json%%"$m"*}
         new="$pre$entry${json#*"$m"}"
       else
@@ -108,10 +115,19 @@ main() {
   return 0
 }
 
-# JSON-escape \ and "
+# JSON-escape \, " and the control characters U+0001..U+001F (as \u00XX)
 json_esc() {
-  local s=${1//\\/\\\\}
-  printf '%s' "${s//\"/\\\"}"
+  local s=${1//\\/\\\\} i h c e
+  s=${s//\"/\\\"}
+  if [[ $s == *[[:cntrl:]]* ]]; then
+    for ((i = 1; i < 32; i++)); do
+      printf -v h '%02x' "$i"
+      printf -v c "\\x$h"
+      e="\\u00$h"
+      s=${s//"$c"/"$e"}
+    done
+  fi
+  printf '%s' "$s"
 }
 
 # write_settings <target> <content> <had_file>: one backup (existing file only),
